@@ -16,7 +16,6 @@ class LatexToPdf
     config=self.config.merge(config)
     parse_twice=config[:parse_twice] if parse_twice.nil? # deprecated
     parse_runs=[config[:parse_runs], (parse_twice ? 2 : config[:parse_runs])].max
-    puts "Running Latex #{parse_runs} times..."
     dir=File.join(Rails.root,'tmp','rails-latex',"#{Process.pid}-#{Thread.current.hash}")
     input=File.join(dir,'input.tex')
     FileUtils.mkdir_p(dir)
@@ -26,26 +25,16 @@ class LatexToPdf
       FileUtils.cp_r(supporting, dir)
     end
     File.open(input,'wb') {|io| io.write(code) }
-    Process.waitpid(
-      fork do
-        begin
-          Dir.chdir dir
-          original_stdout, original_stderr = $stdout, $stderr
-          $stderr = $stdout = File.open("input.log","a")
-          args=config[:arguments] + %w[-shell-escape -interaction batchmode input.tex]
-          (parse_runs-1).times do
-            system config[:command],'-draftmode',*args
-          end
-          exec config[:command],*args
-        rescue
-          File.open("input.log",'a') {|io|
-            io.write("#{$!.message}:\n#{$!.backtrace.join("\n")}\n")
-          }
-        ensure
-          $stdout, $stderr = original_stdout, original_stderr
-          Process.exit! 1
-        end
-      end)
+
+    log_path = File.join(dir, "input.log")
+
+    args = config[:arguments] + %w[-shell-escape -interaction batchmode input.tex]
+    final_pid = spawn(config[:command], *args, chdir: dir,
+                                               out: '/dev/null',
+                                               err: log_path)
+    Process.wait(final_pid)
+    raise "pdflatex failed with exit code #{$?.exitstatus}" unless $?.exitstatus.zero?
+
     if File.exist?(pdf_file=input.sub(/\.tex$/,'.pdf'))
       FileUtils.mv(input,File.join(dir,'..','input.tex'))
       FileUtils.mv(input.sub(/\.tex$/,'.log'),File.join(dir,'..','input.log'))
